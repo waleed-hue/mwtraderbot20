@@ -3,6 +3,7 @@ import { TrendingUp, LogOut, ChevronDown, Globe, Clock, BarChart3, MessageSquare
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
 import { db, auth } from './firebase';
+import { supabase } from './supabase';
 import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, query, where, Timestamp, getDocFromServer } from 'firebase/firestore';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User as FirebaseUser } from 'firebase/auth';
 
@@ -143,12 +144,13 @@ function WarningBox() {
 }
 
 interface DetailedSignal {
-  trend: 'Bullish' | 'Bearish' | 'Neutral';
+  trend: 'Bullish' | 'Bearish' | 'Neutral' | string;
   entry: string;
   tp: string;
   sl: string;
   ratio: string;
   analysis: string;
+  conditions: string;
   price: number;
 }
 
@@ -202,18 +204,46 @@ function AdminPanel({ onBack }: { onBack: () => void }) {
   const [tokens, setTokens] = useState<TokenData[]>([]);
   const [newToken, setNewToken] = useState("");
   const [newLabel, setNewLabel] = useState("");
-  const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDays, setEditDays] = useState(30);
   const [editLabel, setEditLabel] = useState("");
 
   useEffect(() => {
-    const q = query(collection(db, "tokens"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const tokenList = snapshot.docs.map(doc => ({ ...doc.data() } as TokenData));
-      setTokens(tokenList);
-    });
-    return () => unsubscribe();
+    const fetchTokens = async () => {
+      const { data, error } = await supabase
+        .from('tokens')
+        .select('*')
+        .order('created_at', { ascending: false });
+      
+      if (error) {
+        console.error("Error fetching tokens from Supabase:", error);
+        return;
+      }
+      
+      if (data) {
+        setTokens(data.map(t => ({
+          id: t.id,
+          label: t.label,
+          createdAt: t.created_at,
+          expiresAt: t.expires_at,
+          status: t.status
+        })));
+      }
+    };
+
+    fetchTokens();
+
+    // Set up real-time subscription
+    const channel = supabase
+      .channel('tokens-db-changes')
+      .on('postgres_changes', { event: '*', table: 'tokens', schema: 'public' }, () => {
+        fetchTokens();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const handleAddToken = async () => {
@@ -223,26 +253,35 @@ function AdminPanel({ onBack }: { onBack: () => void }) {
     expiresAt.setDate(expiresAt.getDate() + 30);
 
     try {
-      await setDoc(doc(db, "tokens", cleanToken), {
-        id: cleanToken,
-        label: newLabel || "User",
-        createdAt: Timestamp.now(),
-        expiresAt: Timestamp.fromDate(expiresAt),
-        status: 'active'
-      });
+      const { error } = await supabase
+        .from('tokens')
+        .insert([{
+          id: cleanToken,
+          label: newLabel || "User",
+          created_at: new Date().toISOString(),
+          expires_at: expiresAt.toISOString(),
+          status: 'active'
+        }]);
+
+      if (error) throw error;
 
       setNewToken("");
       setNewLabel("");
     } catch (err) {
-      console.error("Failed to add token", err);
+      console.error("Failed to add token to Supabase", err);
     }
   };
 
   const handleDeleteToken = async (id: string) => {
     try {
-      await deleteDoc(doc(db, "tokens", id));
+      const { error } = await supabase
+        .from('tokens')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
     } catch (err) {
-      console.error("Failed to delete token", err);
+      console.error("Failed to delete token from Supabase", err);
     }
   };
 
@@ -250,14 +289,19 @@ function AdminPanel({ onBack }: { onBack: () => void }) {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + editDays);
     try {
-      await updateDoc(doc(db, "tokens", id), {
-        expiresAt: Timestamp.fromDate(expiresAt),
-        label: editLabel || "User",
-        status: 'active'
-      });
+      const { error } = await supabase
+        .from('tokens')
+        .update({
+          expires_at: expiresAt.toISOString(),
+          label: editLabel || "User",
+          status: 'active'
+        })
+        .eq('id', id);
+      
+      if (error) throw error;
       setEditingId(null);
     } catch (err) {
-      console.error("Failed to update token", err);
+      console.error("Failed to update token in Supabase", err);
     }
   };
 
@@ -445,13 +489,28 @@ export default function App() {
         }
 
         try {
-          const docRef = doc(db, "tokens", savedToken);
-          const docSnap = await getDoc(docRef);
-          if (docSnap.exists()) {
-            const data = docSnap.data() as TokenData;
-            const expiry = data.expiresAt instanceof Timestamp ? data.expiresAt.toDate() : new Date(data.expiresAt);
+          const { data, error } = await supabase
+            .from('tokens')
+            .select('*')
+            .eq('id', savedToken)
+            .single();
+          
+          if (error) {
+            console.error("Supabase token check error:", error);
+            localStorage.removeItem('mw_trader_token');
+            return;
+          }
+
+          if (data) {
+            const expiry = new Date(data.expires_at);
             if (expiry.getTime() > Date.now()) {
-              setUserTokenData(data);
+              setUserTokenData({
+                id: data.id,
+                label: data.label,
+                createdAt: data.created_at,
+                expiresAt: data.expires_at,
+                status: data.status
+              });
               setIsLoggedIn(true);
             } else {
               localStorage.removeItem('mw_trader_token');
@@ -512,16 +571,31 @@ export default function App() {
     }
 
     try {
-      const docRef = doc(db, "tokens", cleanToken);
-      const docSnap = await getDoc(docRef);
+      const { data, error } = await supabase
+        .from('tokens')
+        .select('*')
+        .eq('id', cleanToken)
+        .single();
       
-      if (docSnap.exists()) {
-        const data = docSnap.data() as TokenData;
-        const expiry = data.expiresAt instanceof Timestamp ? data.expiresAt.toDate() : new Date(data.expiresAt);
+      if (error) {
+        console.error("Supabase login error:", error);
+        setShowTokenModal(true);
+        setError("Access denied. Please contact support for a valid token.");
+        return;
+      }
+      
+      if (data) {
+        const expiry = new Date(data.expires_at);
         
         if (expiry.getTime() > Date.now()) {
           localStorage.setItem('mw_trader_token', cleanToken);
-          setUserTokenData(data);
+          setUserTokenData({
+            id: data.id,
+            label: data.label,
+            createdAt: data.created_at,
+            expiresAt: data.expires_at,
+            status: data.status
+          });
           setIsLoggedIn(true);
           setError(null);
         } else {
@@ -568,8 +642,7 @@ export default function App() {
   };
 
   const generateSignal = async () => {
-    const isDetailed = selectedBroker === "Binance" || selectedBroker === "Forex";
-    if (!selectedBroker || !selectedPair || (!isDetailed && !selectedTimeframe)) {
+    if (!selectedBroker || !selectedPair || (selectedBroker === "Quotex" && !selectedTimeframe)) {
       alert("Please select broker, pair, and timeframe first!");
       return;
     }
@@ -592,75 +665,89 @@ export default function App() {
     setSignal(null);
     setDetailedSignal(null);
     setQuotexWaitTime(null);
+    setError(null);
 
     try {
-      if (isDetailed) {
-        // ... existing detailed signal logic ...
-        let currentPrice = 0;
-        if (selectedBroker === "Binance") {
-          // Fetch current price from Binance
-          const priceRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${selectedPair}`);
-          const priceData = await priceRes.json();
-          currentPrice = parseFloat(priceData.price);
-        } else {
-          // For Forex, we'll use a mock price or let AI estimate if no easy free API
-          // Most Forex pairs are around 1.xxxx or 1xx.xx
-          currentPrice = selectedPair.includes("JPY") ? 150.45 : 1.0845;
-        }
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      let context = "";
+      let currentPrice = 0;
 
-        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-        const response = await ai.models.generateContent({
-          model: "gemini-3-flash-preview",
-          contents: `You are a professional ${selectedBroker === 'Binance' ? 'crypto' : 'forex'} analyst. Analyze the current market for ${selectedPair} ${selectedBroker === 'Binance' ? '' : '(Forex)'} at price ${currentPrice}. 
-          Provide a high-probability trading signal in JSON format with the following fields:
-          "trend" (Bullish/Bearish/Neutral), 
-          "entry" (suggested entry price near current), 
-          "tp" (Take Profit - realistic target), 
-          "sl" (Stop Loss - risk management), 
-          "ratio" (Risk/Reward ratio, e.g. "1:2.5"),
-          "analysis" (A detailed 2-3 sentence technical reasoning. Use bold markdown for key terms like **strong momentum**, **MACD crossover**, etc.).`,
-          config: { responseMimeType: "application/json" }
-        });
-
-        const result = JSON.parse(response.text || "{}");
-        setDetailedSignal({ ...result, price: currentPrice });
-        setIsGenerating(false);
-      } else {
-        const token = localStorage.getItem('mw_trader_token');
-        const response = await fetch(`/api/signals?token=${token}&symbol=${selectedPair}&type=${selectedBroker.toLowerCase()}`);
-        const data = await response.json();
-        
-        if (data.error) {
-          setError(data.error);
-          setIsGenerating(false);
-          return;
-        }
-
-        // Simulate a bit of delay for the "Analyzing" feel
-        setTimeout(() => {
-          const result = data.signals[selectedTimeframe];
-          const prefix = Math.random() > 0.5 ? "STRONG " : "";
-          const arrow = result === "Buy" ? "⬆️" : "⬇️";
-          const doubleArrow = result === "Buy" ? "⬆️⬆️" : "⬇️⬇️";
-          
-          setSignal(`${prefix}${result.toUpperCase()} (${result === 'Buy' ? 'CALL' : 'PUT'}) ${prefix ? doubleArrow : arrow}`);
-          
-          // Set expiration for Quotex
-          if (selectedBroker === "Quotex") {
-            const duration = parseTimeframe(selectedTimeframe);
-            const signalKey = `${selectedPair}_${selectedTimeframe}`;
-            setActiveQuotexSignals(prev => ({
-              ...prev,
-              [signalKey]: Date.now() + duration
-            }));
-          }
-          
-          setIsGenerating(false);
-        }, 1500);
+      if (selectedBroker === "Binance") {
+        // Fetch current price and 24h stats from Binance
+        const [priceRes, tickerRes] = await Promise.all([
+          fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${selectedPair}`),
+          fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${selectedPair}`)
+        ]);
+        const priceData = await priceRes.json();
+        const tickerData = await tickerRes.json();
+        currentPrice = parseFloat(priceData.price);
+        context = `Current Price: ${currentPrice}. 24h Change: ${tickerData.priceChangePercent}%. 24h High: ${tickerData.highPrice}. 24h Low: ${tickerData.lowPrice}. Volume: ${tickerData.volume}.`;
       }
+
+      const isBinary = selectedBroker === "Quotex";
+      console.log(`Generating signal for ${selectedBroker} - ${selectedPair}`);
+      
+      const prompt = isBinary 
+        ? `Analyze the live market for ${selectedPair} for a ${selectedTimeframe} binary options trade. 
+           Use Google Search to find the latest live price, RSI, and MACD indicators for this pair right now.
+           Provide a high-probability signal in JSON format:
+           "trend" (Strong Buy/Strong Sell/Neutral),
+           "entry" (suggested entry price),
+           "tp" (not applicable for binary, use "N/A"),
+           "sl" (not applicable for binary, use "N/A"),
+           "ratio" (Win Probability, e.g. "85%"),
+           "analysis" (2-3 sentences of professional technical reasoning based on live data).`
+        : `You are a professional ${selectedBroker === 'Binance' ? 'crypto' : 'forex'} analyst. 
+           Analyze ${selectedPair} ${selectedBroker === 'Binance' ? '' : '(Forex)'}. 
+           ${context ? `Live Data: ${context}` : `Use Google Search to find the latest live price and market sentiment for this pair right now.`}
+           Provide a high-probability trading signal in JSON format with these EXACT fields:
+           "trend" (Bullish/Bearish/Neutral), 
+           "entry" (suggested entry price), 
+           "tp" (Take Profit target), 
+           "sl" (Stop Loss level), 
+           "ratio" (Risk/Reward ratio, e.g. "1:2.5"),
+           "conditions" (Specific market conditions to watch for, e.g. "Wait for H1 candle close above 2030"),
+           "analysis" (2-3 sentences of technical reasoning. Use bold markdown for key terms).`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+        config: { 
+          responseMimeType: "application/json",
+          tools: [{ googleSearch: {} }]
+        }
+      });
+
+      console.log("AI Response:", response.text);
+      const result = JSON.parse(response.text || "{}");
+      
+      if (isBinary) {
+        // For binary options, we show a simpler but powerful signal
+        const trend = result.trend || "Neutral";
+        const prefix = trend.includes("Strong") ? "🔥 " : "";
+        const arrow = trend.includes("Buy") || trend.includes("Bullish") ? "⬆️" : "⬇️";
+        const signalText = `${prefix}${trend.toUpperCase()} (${trend.includes("Buy") ? 'CALL' : 'PUT'}) ${arrow}`;
+        setSignal(signalText);
+        
+        // Set expiration for Quotex
+        const duration = parseTimeframe(selectedTimeframe);
+        const signalKey = `${selectedPair}_${selectedTimeframe}`;
+        setActiveQuotexSignals(prev => ({
+          ...prev,
+          [signalKey]: Date.now() + duration
+        }));
+      } else {
+        setDetailedSignal({ 
+          ...result, 
+          price: currentPrice || parseFloat(result.entry) || 0,
+          conditions: result.conditions || "No specific conditions."
+        });
+      }
+      
+      setIsGenerating(false);
     } catch (err) {
       console.error("Signal generation failed", err);
-      setError("Failed to generate signal. Please try again.");
+      setError("Failed to generate signal. Please check your internet or try again.");
       setIsGenerating(false);
     }
   };
@@ -1036,6 +1123,16 @@ export default function App() {
                     </div>
                     <p className="text-sm font-black text-red-500">{selectedBroker === 'Binance' ? '$' : ''}{detailedSignal.sl}</p>
                   </div>
+                </div>
+
+                <div className="bg-blue-500/5 p-4 rounded-2xl border border-blue-500/10">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ShieldAlert className="w-3 h-3 text-blue-500" />
+                    <p className="text-[9px] font-black text-blue-500/50 uppercase tracking-widest">Trade Conditions</p>
+                  </div>
+                  <p className="text-[11px] text-neutral-300 leading-relaxed font-bold">
+                    {detailedSignal.conditions}
+                  </p>
                 </div>
 
                 <div className="bg-purple-500/5 p-4 rounded-2xl border border-purple-500/10">

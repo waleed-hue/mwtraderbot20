@@ -3,22 +3,40 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import cors from "cors";
 import axios from "axios";
+import { createClient } from '@supabase/supabase-js';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const app = express();
 const PORT = 3000;
 
+const supabaseUrl = process.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
+
+const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '');
+
 app.use(cors());
 app.use(express.json());
 
-const VALID_TOKENS = new Set(["abc123", "xyz456", "waleed123", "wajahat123"]);
-
-// Middleware for token validation
-const validateToken = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  const token = req.query.token as string;
-  if (VALID_TOKENS.has(token)) {
-    next();
-  } else {
-    res.status(403).send("<h1>Access Denied</h1><p>Invalid or missing token.</p>");
+// Helper to validate token against Supabase
+const isTokenValid = async (token: string) => {
+  if (token === "adminwaleed786") return true;
+  
+  try {
+    const { data, error } = await supabase
+      .from('tokens')
+      .select('*')
+      .eq('id', token)
+      .single();
+    
+    if (error || !data) return false;
+    
+    const expiry = new Date(data.expires_at);
+    return expiry.getTime() > Date.now();
+  } catch (err) {
+    console.error("Token validation error:", err);
+    return false;
   }
 };
 
@@ -38,7 +56,9 @@ app.get("/api/binance-symbols", async (req, res) => {
 // API for signals
 app.get("/api/signals", async (req, res) => {
   const token = (req.query.token as string)?.trim().toLowerCase();
-  if (!VALID_TOKENS.has(token)) {
+  const valid = await isTokenValid(token || '');
+  
+  if (!valid) {
     return res.status(403).json({ error: "Unauthorized" });
   }
 
