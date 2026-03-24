@@ -276,8 +276,10 @@ function AdminPanel({ onBack }: { onBack: () => void }) {
 
       setNewToken("");
       setNewLabel("");
-    } catch (err) {
+      alert("Token added successfully!");
+    } catch (err: any) {
       console.error("Failed to add token to Supabase", err);
+      alert(`Failed to add token: ${err.message || "Unknown error"}`);
     }
   };
 
@@ -289,8 +291,10 @@ function AdminPanel({ onBack }: { onBack: () => void }) {
         .eq('id', id);
       
       if (error) throw error;
-    } catch (err) {
+      alert("Token deleted successfully!");
+    } catch (err: any) {
       console.error("Failed to delete token from Supabase", err);
+      alert(`Failed to delete token: ${err.message || "Unknown error"}`);
     }
   };
 
@@ -309,8 +313,10 @@ function AdminPanel({ onBack }: { onBack: () => void }) {
       
       if (error) throw error;
       setEditingId(null);
-    } catch (err) {
+      alert("Token updated successfully!");
+    } catch (err: any) {
       console.error("Failed to update token in Supabase", err);
+      alert(`Failed to update token: ${err.message || "Unknown error"}`);
     }
   };
 
@@ -458,6 +464,19 @@ export default function App() {
   const [selectedTimeframe, setSelectedTimeframe] = useState("");
   const [pairSearch, setPairSearch] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [configError, setConfigError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Check for missing configuration
+    const missing = [];
+    if (!import.meta.env.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL.includes('placeholder')) missing.push('Supabase URL');
+    if (!import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY.includes('placeholder')) missing.push('Supabase Anon Key');
+    if (!process.env.GEMINI_API_KEY) missing.push('Gemini API Key');
+
+    if (missing.length > 0) {
+      setConfigError(`Missing Configuration: ${missing.join(', ')}. Please set these in your environment variables (Netlify/Vercel/Local).`);
+    }
+  }, []);
   const [signal, setSignal] = useState<string | null>(null);
   const [detailedSignal, setDetailedSignal] = useState<DetailedSignal | null>(null);
   const [showTokenModal, setShowTokenModal] = useState(false);
@@ -561,6 +580,32 @@ export default function App() {
     setDetailedSignal(null);
   }, [selectedBroker]);
 
+  if (configError) {
+    return (
+      <div className="min-h-screen bg-[#0f0a1a] flex items-center justify-center p-6 text-center">
+        <div className="bg-[#1a1625] border border-red-500/20 p-10 rounded-[3rem] max-w-lg shadow-2xl">
+          <AlertTriangle className="w-16 h-16 text-red-500 mx-auto mb-6" />
+          <h2 className="text-2xl font-black text-white mb-4 uppercase italic tracking-tighter leading-none">Configuration Required</h2>
+          <p className="text-neutral-500 mb-8 font-medium leading-relaxed">
+            {configError}
+          </p>
+          <div className="space-y-3">
+            <button 
+              onClick={() => window.open('https://wa.me/923165581294', '_blank')}
+              className="w-full bg-[#25D366] hover:bg-[#128C7E] text-white font-black py-4 rounded-2xl transition-all shadow-lg shadow-green-500/20 flex items-center justify-center gap-3 uppercase tracking-wider"
+            >
+              <MessageSquare className="w-5 h-5" />
+              Contact Support
+            </button>
+            <p className="text-[10px] text-neutral-700 font-black uppercase tracking-widest">
+              Check your environment variables
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!isAuthReady) {
     return (
       <div className="min-h-screen bg-[#0f0a1a] flex items-center justify-center">
@@ -592,8 +637,8 @@ export default function App() {
       
       if (error) {
         console.error("Supabase login error:", error);
+        setError(`Access denied: ${error.message || "Invalid Token"}`);
         setShowTokenModal(true);
-        setError("Access denied. Please contact support for a valid token.");
         return;
       }
       
