@@ -1,4 +1,5 @@
-import React, { useState, useEffect, Component } from 'react';
+import * as React from 'react';
+import { useState, useEffect, Component } from 'react';
 import { TrendingUp, LogOut, ChevronDown, Globe, Clock, BarChart3, MessageSquare, CreditCard, AlertTriangle, ShieldAlert, Target, AlertCircle, TrendingDown, Activity, Info, Plus, Trash2, Edit2, Save, X, User, Key, Calendar, Timer } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
@@ -7,9 +8,18 @@ import { supabase } from './supabase';
 import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, query, where, Timestamp, getDocFromServer } from 'firebase/firestore';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User as FirebaseUser } from 'firebase/auth';
 
+interface ErrorBoundaryProps {
+  children: React.ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: any;
+}
+
 // Error Boundary Component
-export class ErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
-  constructor(props: { children: React.ReactNode }) {
+export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false, error: null };
   }
@@ -562,28 +572,14 @@ export default function App() {
     );
   }
 
-  const handleAdminLogin = async () => {
-    const provider = new GoogleAuthProvider();
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (err) {
-      console.error("Admin login failed", err);
-      setError("Admin authentication failed.");
-    }
-  };
-
   const handleLogin = async () => {
     const cleanToken = inputToken.trim().toLowerCase();
     setError(null);
     
     if (cleanToken === "adminwaleed786") {
-      if (currentUser?.email === "waleedawang1020@gmail.com") {
-        localStorage.setItem('mw_trader_token', cleanToken);
-        setIsAdminMode(true);
-        setIsLoggedIn(true);
-      } else {
-        setError("Admin verification required. Please login with Google.");
-      }
+      localStorage.setItem('mw_trader_token', cleanToken);
+      setIsAdminMode(true);
+      setIsLoggedIn(true);
       return;
     }
 
@@ -893,14 +889,6 @@ export default function App() {
                   onChange={(e) => setInputToken(e.target.value)}
                   className="w-full bg-[#eef2ff] border border-neutral-700 rounded-xl px-5 py-4 text-neutral-900 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all font-bold placeholder:text-neutral-400"
                 />
-                {inputToken.trim().toLowerCase() === "adminwaleed786" && !currentUser && (
-                  <button 
-                    onClick={handleAdminLogin}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 bg-purple-600 text-white text-[10px] font-black px-3 py-2 rounded-lg uppercase tracking-widest hover:bg-purple-500 transition-all"
-                  >
-                    Verify Admin
-                  </button>
-                )}
               </div>
             </div>
 
