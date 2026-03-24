@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+@theme {
+  --animate-spin-slow: spin 3s linear infinite;
+  --color-mw-bg: #0f0a1a;
+  --color-mw-card: #1a1625;
+  --color-mw-purple-start: #6366f1;
+  --color-mw-purple-end: #a855f7;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+body {
+  @apply bg-mw-bg text-neutral-100 min-h-screen flex items-center justify-center font-sans;
+}
+
+.mw-gradient-btn {
+  @apply bg-gradient-to-r from-mw-purple-start to-mw-purple-end hover:opacity-90 transition-opacity text-white font-bold py-4 px-6 rounded-xl shadow-lg;
+}
+
+.mw-card {
+  @apply bg-mw-card border border-neutral-800 rounded-[2rem] p-8 shadow-2xl w-full max-w-md;
+}
+
+.mw-warning {
+  @apply border-2 border-yellow-500 bg-neutral-900/50 p-4 rounded-xl text-center mb-8;
+}
+
+.mw-error {
+  @apply bg-red-900/30 border border-red-500/50 p-4 rounded-xl text-center mt-6 text-red-400 text-sm font-medium;
+}

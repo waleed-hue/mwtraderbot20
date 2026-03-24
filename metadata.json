@@ -1,0 +1,5 @@
+{
+  "name": "Secure Trading Signals Dashboard",
+  "description": "A token-protected dashboard for live Forex and Crypto trading signals across multiple timeframes.",
+  "requestFramePermissions": []
+}

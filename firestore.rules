@@ -1,0 +1,49 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: tokens
+    // Document ID: token string
+    // Fields:
+    //   - id: string (required) - the token itself
+    //   - createdAt: timestamp (required) - creation time
+    //   - expiresAt: timestamp (required) - expiration time
+    //   - status: string (required) - 'active' or 'expired'
+    //   - label: string (optional) - user identifier
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (request.auth.token.email == "waleedawang1020@gmail.com" && request.auth.token.email_verified == true);
+    }
+
+    match /tokens/{tokenId} {
+      // Allow reading a specific token if you know its ID (for login)
+      allow get: if true; 
+      
+      // Only admin can list, create, update, or delete tokens
+      allow list: if isAdmin();
+      allow create: if isAdmin() && isValidToken(request.resource.data);
+      allow update: if isAdmin() && isValidToken(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    function isValidToken(data) {
+      return data.keys().hasAll(['id', 'createdAt', 'expiresAt', 'status']) &&
+             data.id is string && data.id.size() > 0 &&
+             data.createdAt is timestamp &&
+             data.expiresAt is timestamp &&
+             data.status in ['active', 'expired'] &&
+             (!('label' in data) || data.label is string);
+    }
+  }
+}

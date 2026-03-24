@@ -1,0 +1,23 @@
+{
+  "entities": {
+    "Token": {
+      "title": "Token",
+      "description": "Access token for the bot",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The token string" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the token was created" },
+        "expiresAt": { "type": "string", "format": "date-time", "description": "When the token expires" },
+        "status": { "type": "string", "enum": ["active", "expired"], "description": "Current status of the token" },
+        "label": { "type": "string", "description": "Optional label for the user" }
+      },
+      "required": ["id", "createdAt", "expiresAt", "status"]
+    }
+  },
+  "firestore": {
+    "/tokens/{tokenId}": {
+      "schema": "Token",
+      "description": "Collection of access tokens"
+    }
+  }
+}
