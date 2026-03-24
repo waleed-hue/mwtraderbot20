@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useState, useEffect, Component } from 'react';
-import { TrendingUp, LogOut, ChevronDown, Globe, Clock, BarChart3, MessageSquare, CreditCard, AlertTriangle, ShieldAlert, Target, AlertCircle, TrendingDown, Activity, Info, Plus, Trash2, Edit2, Save, X, User, Key, Calendar, Timer } from 'lucide-react';
+import { TrendingUp, LogOut, ChevronDown, Globe, Clock, BarChart3, MessageSquare, CreditCard, AlertTriangle, ShieldAlert, Target, AlertCircle, TrendingDown, Activity, Info, Plus, Trash2, Edit2, Save, X, User, Key, Calendar, Timer, Volume2, VolumeX } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
 import { db, auth } from './firebase';
@@ -484,6 +484,38 @@ export default function App() {
   const [quotexWaitTime, setQuotexWaitTime] = useState<string | null>(null);
   const [binanceSymbols, setBinanceSymbols] = useState<string[]>([]);
   const [isLoadingSymbols, setIsLoadingSymbols] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    const saved = localStorage.getItem('mw_sound_enabled');
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('mw_sound_enabled', soundEnabled.toString());
+  }, [soundEnabled]);
+
+  const playAlertSound = () => {
+    if (!soundEnabled) return;
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // A5
+      oscillator.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + 0.5); // A4
+
+      gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.5);
+    } catch (err) {
+      console.error("Failed to play alert sound", err);
+    }
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -779,6 +811,8 @@ export default function App() {
       console.log("AI Response:", response.text);
       const result = JSON.parse(response.text || "{}");
       
+      playAlertSound();
+
       if (isBinary) {
         // For binary options, we show a simpler but powerful signal
         const trend = result.trend || "Neutral";
@@ -993,7 +1027,16 @@ export default function App() {
     <div className="w-full max-w-md px-4 py-10">
       <div className="bg-[#1a1625] border border-neutral-800/50 rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden">
         <div className="flex items-center justify-between absolute top-6 left-6 right-6 z-20">
-          {userTokenData && <TokenTimer expiresAt={userTokenData.expiresAt} />}
+          <div className="flex items-center gap-2">
+            {userTokenData && <TokenTimer expiresAt={userTokenData.expiresAt} />}
+            <button 
+              onClick={() => setSoundEnabled(!soundEnabled)}
+              className={`p-2.5 rounded-xl transition-all flex items-center justify-center shadow-lg ${soundEnabled ? 'bg-purple-600/20 text-purple-400 border border-purple-500/30' : 'bg-neutral-800 text-neutral-500 border border-neutral-700/50'}`}
+              title={soundEnabled ? "Disable Sound" : "Enable Sound"}
+            >
+              {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+            </button>
+          </div>
           <button 
             onClick={handleLogout}
             className="bg-gradient-to-r from-[#6366f1] to-[#a855f7] text-white font-bold px-5 py-2.5 rounded-xl text-xs flex items-center gap-2 hover:opacity-90 transition-all shadow-lg"
