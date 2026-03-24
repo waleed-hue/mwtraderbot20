@@ -9,10 +9,9 @@ import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User 
 
 // Error Boundary Component
 export class ErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
-  state = { hasError: false, error: null };
-
   constructor(props: { children: React.ReactNode }) {
     super(props);
+    this.state = { hasError: false, error: null };
   }
 
   static getDerivedStateFromError(error: any) {
@@ -30,11 +29,11 @@ export class ErrorBoundary extends Component<{ children: React.ReactNode }, { ha
           <div className="bg-[#1a1625] border border-red-500/20 p-10 rounded-[3rem] max-w-lg shadow-2xl">
             <ShieldAlert className="w-16 h-16 text-red-500 mx-auto mb-6" />
             <h2 className="text-2xl font-black text-white mb-4 uppercase italic tracking-tighter">System Error Detected</h2>
-            <p className="text-neutral-500 mb-8 font-medium">The application encountered an unexpected error. This usually happens due to corrupted local data or network issues.</p>
+            <p className="text-neutral-500 mb-8 font-medium">The application encountered an unexpected error. {this.state.error?.message || "Unknown error"}</p>
             <button 
               onClick={() => {
                 localStorage.clear();
-                window.location.href = window.location.pathname;
+                window.location.reload();
               }}
               className="w-full bg-red-600 hover:bg-red-500 text-white font-black py-4 rounded-2xl transition-all shadow-lg shadow-red-600/20"
             >
@@ -44,7 +43,7 @@ export class ErrorBoundary extends Component<{ children: React.ReactNode }, { ha
         </div>
       );
     }
-    return (this as any).props.children;
+    return this.props.children;
   }
 }
 
@@ -527,14 +526,21 @@ export default function App() {
   useEffect(() => {
     if (selectedBroker === "Binance") {
       setIsLoadingSymbols(true);
-      fetch('/api/binance-symbols')
+      // Fetch directly from Binance API to be serverless/Netlify compatible
+      fetch('https://api.binance.com/api/v3/exchangeInfo')
         .then(res => res.json())
         .then(data => {
-          setBinanceSymbols(data);
+          const symbols = data.symbols
+            .filter((s: any) => s.status === 'TRADING' && s.quoteAsset === 'USDT')
+            .map((s: any) => s.symbol)
+            .sort();
+          setBinanceSymbols(symbols);
           setIsLoadingSymbols(false);
         })
         .catch(err => {
-          console.error("Failed to fetch symbols", err);
+          console.error("Failed to fetch symbols from Binance API", err);
+          // Fallback to some common pairs if API fails
+          setBinanceSymbols(["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"]);
           setIsLoadingSymbols(false);
         });
     } else {
@@ -544,6 +550,17 @@ export default function App() {
     setSignal(null);
     setDetailedSignal(null);
   }, [selectedBroker]);
+
+  if (!isAuthReady) {
+    return (
+      <div className="min-h-screen bg-[#0f0a1a] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-purple-500/20 border-t-purple-500 rounded-full animate-spin" />
+          <p className="text-xs font-black text-white uppercase tracking-widest animate-pulse">Initializing Systems...</p>
+        </div>
+      </div>
+    );
+  }
 
   const handleAdminLogin = async () => {
     const provider = new GoogleAuthProvider();
