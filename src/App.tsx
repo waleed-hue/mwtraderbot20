@@ -681,7 +681,11 @@ export default function App() {
     setError(null);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey || apiKey === "undefined" || apiKey === "") {
+        throw new Error("Gemini API Key is missing. Please set GEMINI_API_KEY in your environment variables.");
+      }
+      const ai = new GoogleGenAI({ apiKey });
       let context = "";
       let currentPrice = 0;
 
@@ -1058,6 +1062,21 @@ export default function App() {
               <span className="text-xs uppercase tracking-widest">Admin</span>
             </button>
           </div>
+          
+          <AnimatePresence>
+            {error && (
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 10 }}
+                className="bg-red-500/10 border border-red-500/30 p-4 rounded-2xl text-center"
+              >
+                <p className="text-red-500 text-[11px] font-bold leading-relaxed">
+                  {error}
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <div className="bg-neutral-950 border border-neutral-800 rounded-3xl p-6 text-center min-h-[140px] flex flex-col items-center justify-center shadow-inner relative overflow-hidden">
             {isGenerating && (

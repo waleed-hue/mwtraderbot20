@@ -3,42 +3,82 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import cors from "cors";
 import axios from "axios";
-import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
+import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
 
-const supabaseUrl = process.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
-
-const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '');
-
 app.use(cors());
 app.use(express.json());
 
-// Helper to validate token against Supabase
+// Initialize Gemini
+const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+if (apiKey) {
+  console.log("Gemini API Key found (using " + (process.env.GEMINI_API_KEY ? "GEMINI_API_KEY" : "VITE_GEMINI_API_KEY") + ")");
+} else {
+  console.warn("No Gemini API Key found in environment variables.");
+}
+const genAI = apiKey ? new GoogleGenAI({ apiKey }) : null;
+
+// Helper to validate token (simplified for now as real validation is on client)
 const isTokenValid = async (token: string) => {
   if (token === "adminwaleed786") return true;
-  
-  try {
-    const { data, error } = await supabase
-      .from('tokens')
-      .select('*')
-      .eq('id', token)
-      .single();
-    
-    if (error || !data) return false;
-    
-    const expiry = new Date(data.expires_at);
-    return expiry.getTime() > Date.now();
-  } catch (err) {
-    console.error("Token validation error:", err);
-    return false;
-  }
+  return !!token;
 };
+
+// Gemini Proxy Endpoint
+app.post("/api/generate-ai-signal", async (req, res) => {
+  try {
+    const { prompt, token } = req.body;
+    
+    if (!await isTokenValid(token)) {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    if (!genAI) {
+      return res.status(500).json({ error: "Gemini API Key is not configured on the server." });
+    }
+
+    const modelsToTry = [
+      "gemini-3-flash-preview",
+      "gemini-3.1-flash-lite-preview",
+      "gemini-3.1-pro-preview"
+    ];
+
+    let lastError = null;
+    let text = "";
+
+    for (const modelName of modelsToTry) {
+      try {
+        console.log(`Attempting signal generation with model: ${modelName}`);
+        const response = await genAI.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: { 
+            responseMimeType: "application/json"
+          }
+        });
+        text = response.text || "";
+        if (text) break;
+      } catch (err: any) {
+        console.warn(`Model ${modelName} failed:`, err.message);
+        lastError = err;
+      }
+    }
+
+    if (!text && lastError) {
+      throw lastError;
+    }
+    
+    res.json({ text });
+  } catch (error: any) {
+    console.error("Gemini Proxy Error:", error);
+    res.status(500).json({ error: error.message || "Failed to generate AI signal" });
+  }
+});
 
 // API for Binance Future Symbols
 app.get("/api/binance-symbols", async (req, res) => {
