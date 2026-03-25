@@ -683,22 +683,32 @@ export default function App() {
     try {
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey || apiKey === "undefined" || apiKey === "") {
-        throw new Error("Gemini API Key is missing. Please set GEMINI_API_KEY in your environment variables.");
+        throw new Error("Gemini API Key is missing. Please set GEMINI_API_KEY in your Netlify environment variables.");
       }
       const ai = new GoogleGenAI({ apiKey });
       let context = "";
       let currentPrice = 0;
 
       if (selectedBroker === "Binance") {
-        // Fetch current price and 24h stats from Binance
-        const [priceRes, tickerRes] = await Promise.all([
-          fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${selectedPair}`),
-          fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${selectedPair}`)
-        ]);
-        const priceData = await priceRes.json();
-        const tickerData = await tickerRes.json();
-        currentPrice = parseFloat(priceData.price);
-        context = `Current Price: ${currentPrice}. 24h Change: ${tickerData.priceChangePercent}%. 24h High: ${tickerData.highPrice}. 24h Low: ${tickerData.lowPrice}. Volume: ${tickerData.volume}.`;
+        try {
+          // Fetch current price and 24h stats from Binance
+          const [priceRes, tickerRes] = await Promise.all([
+            fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${selectedPair}`),
+            fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${selectedPair}`)
+          ]);
+          
+          if (!priceRes.ok || !tickerRes.ok) {
+            console.warn("Binance API returned an error, proceeding with search grounding instead.");
+          } else {
+            const priceData = await priceRes.json();
+            const tickerData = await tickerRes.json();
+            currentPrice = parseFloat(priceData.price);
+            context = `Current Price: ${currentPrice}. 24h Change: ${tickerData.priceChangePercent}%. 24h High: ${tickerData.highPrice}. 24h Low: ${tickerData.lowPrice}. Volume: ${tickerData.volume}.`;
+          }
+        } catch (binanceErr) {
+          console.warn("Failed to fetch from Binance:", binanceErr);
+          // Don't throw, we can fall back to Google Search
+        }
       }
 
       const isBinary = selectedBroker === "Quotex";
@@ -728,15 +738,28 @@ export default function App() {
 
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
-        contents: prompt,
+        contents: [{ parts: [{ text: prompt }] }],
         config: { 
           responseMimeType: "application/json",
           tools: [{ googleSearch: {} }]
         }
       });
 
+      if (!response || !response.text) {
+        throw new Error("AI failed to return a valid response text.");
+      }
+
       console.log("AI Response:", response.text);
-      const result = JSON.parse(response.text || "{}");
+      
+      // Clean up response text in case it has markdown blocks
+      let cleanJson = response.text.trim();
+      if (cleanJson.startsWith("```json")) {
+        cleanJson = cleanJson.replace(/^```json/, "").replace(/```$/, "").trim();
+      } else if (cleanJson.startsWith("```")) {
+        cleanJson = cleanJson.replace(/^```/, "").replace(/```$/, "").trim();
+      }
+
+      const result = JSON.parse(cleanJson || "{}");
       
       if (isBinary) {
         // For binary options, we show a simpler but powerful signal
@@ -762,9 +785,10 @@ export default function App() {
       }
       
       setIsGenerating(false);
-    } catch (err) {
-      console.error("Signal generation failed", err);
-      setError("Failed to generate signal. Please check your internet or try again.");
+    } catch (err: any) {
+      console.error("Signal generation failed:", err);
+      const errorMessage = err.message || "Unknown error";
+      setError(`Failed to generate signal: ${errorMessage}. Please check your internet or try again.`);
       setIsGenerating(false);
     }
   };
