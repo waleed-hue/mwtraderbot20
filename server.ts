@@ -3,6 +3,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import cors from "cors";
 import axios from "axios";
+import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -10,16 +11,33 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
+const supabaseUrl = process.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
+
+const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '');
+
 app.use(cors());
 app.use(express.json());
 
-// Helper to validate token (simplified for now as real validation is on client)
+// Helper to validate token against Supabase
 const isTokenValid = async (token: string) => {
   if (token === "adminwaleed786") return true;
-  // In a full implementation, we would use firebase-admin here
-  // For now, we allow requests if a token is provided, 
-  // but the client-side handles the real security.
-  return !!token;
+  
+  try {
+    const { data, error } = await supabase
+      .from('tokens')
+      .select('*')
+      .eq('id', token)
+      .single();
+    
+    if (error || !data) return false;
+    
+    const expiry = new Date(data.expires_at);
+    return expiry.getTime() > Date.now();
+  } catch (err) {
+    console.error("Token validation error:", err);
+    return false;
+  }
 };
 
 // API for Binance Future Symbols

@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { useState, useEffect, Component } from 'react';
-import { TrendingUp, LogOut, ChevronDown, Globe, Clock, BarChart3, MessageSquare, CreditCard, AlertTriangle, ShieldAlert, Target, AlertCircle, TrendingDown, Activity, Info, Plus, Trash2, Edit2, Save, X, User, Key, Calendar, Timer, Volume2, VolumeX } from 'lucide-react';
+import { TrendingUp, LogOut, ChevronDown, Globe, Clock, BarChart3, MessageSquare, CreditCard, AlertTriangle, ShieldAlert, Target, AlertCircle, TrendingDown, Activity, Info, Plus, Trash2, Edit2, Save, X, User, Key, Calendar, Timer } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
 import { db, auth } from './firebase';
-import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, query, where, Timestamp, getDocFromServer, orderBy } from 'firebase/firestore';
+import { supabase } from './supabase';
+import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, query, where, Timestamp, getDocFromServer } from 'firebase/firestore';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User as FirebaseUser } from 'firebase/auth';
 
 interface ErrorBoundaryProps {
@@ -208,7 +209,7 @@ function TokenTimer({ expiresAt }: { expiresAt: any }) {
   );
 }
 
-function AdminPanel({ onBack, currentUser, isAdminMode }: { onBack: () => void, currentUser: FirebaseUser | null, isAdminMode: boolean }) {
+function AdminPanel({ onBack }: { onBack: () => void }) {
   const [tokens, setTokens] = useState<TokenData[]>([]);
   const [newToken, setNewToken] = useState("");
   const [newLabel, setNewLabel] = useState("");
@@ -216,40 +217,43 @@ function AdminPanel({ onBack, currentUser, isAdminMode }: { onBack: () => void, 
   const [editDays, setEditDays] = useState(30);
   const [editLabel, setEditLabel] = useState("");
 
-  const isAdmin = isAdminMode || currentUser?.email === "waleedawang1020@gmail.com";
-
-  const handleAdminLogin = async () => {
-    try {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error("Admin login failed", error);
-    }
-  };
-
   useEffect(() => {
-    if (!isAdmin) return;
-
-    const q = query(collection(db, 'tokens'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const tokensData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as any[];
+    const fetchTokens = async () => {
+      const { data, error } = await supabase
+        .from('tokens')
+        .select('*')
+        .order('created_at', { ascending: false });
       
-      setTokens(tokensData.map(t => ({
-        id: t.id,
-        label: t.label,
-        createdAt: t.createdAt,
-        expiresAt: t.expiresAt,
-        status: t.status
-      })));
-    }, (error) => {
-      console.error("Firebase subscription error:", error);
-    });
+      if (error) {
+        console.error("Error fetching tokens from Supabase:", error);
+        return;
+      }
+      
+      if (data) {
+        setTokens(data.map(t => ({
+          id: t.id,
+          label: t.label,
+          createdAt: t.created_at,
+          expiresAt: t.expires_at,
+          status: t.status
+        })));
+      }
+    };
 
-    return () => unsubscribe();
-  }, [isAdmin]);
+    fetchTokens();
+
+    // Set up real-time subscription
+    const channel = supabase
+      .channel('tokens-db-changes')
+      .on('postgres_changes', { event: '*', table: 'tokens', schema: 'public' }, () => {
+        fetchTokens();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   const handleAddToken = async () => {
     if (!newToken.trim()) return;
@@ -258,30 +262,35 @@ function AdminPanel({ onBack, currentUser, isAdminMode }: { onBack: () => void, 
     expiresAt.setDate(expiresAt.getDate() + 30);
 
     try {
-      await setDoc(doc(db, 'tokens', cleanToken), {
-        id: cleanToken,
-        label: newLabel || "User",
-        createdAt: Timestamp.fromDate(new Date()),
-        expiresAt: Timestamp.fromDate(expiresAt),
-        status: 'active'
-      });
+      const { error } = await supabase
+        .from('tokens')
+        .insert([{
+          id: cleanToken,
+          label: newLabel || "User",
+          created_at: new Date().toISOString(),
+          expires_at: expiresAt.toISOString(),
+          status: 'active'
+        }]);
+
+      if (error) throw error;
 
       setNewToken("");
       setNewLabel("");
-      alert("Token added successfully!");
-    } catch (err: any) {
-      console.error("Failed to add token to Firebase", err);
-      alert(`Failed to add token: ${err.message || "Unknown error"}`);
+    } catch (err) {
+      console.error("Failed to add token to Supabase", err);
     }
   };
 
   const handleDeleteToken = async (id: string) => {
     try {
-      await deleteDoc(doc(db, 'tokens', id));
-      alert("Token deleted successfully!");
-    } catch (err: any) {
-      console.error("Failed to delete token from Firebase", err);
-      alert(`Failed to delete token: ${err.message || "Unknown error"}`);
+      const { error } = await supabase
+        .from('tokens')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+    } catch (err) {
+      console.error("Failed to delete token from Supabase", err);
     }
   };
 
@@ -289,17 +298,19 @@ function AdminPanel({ onBack, currentUser, isAdminMode }: { onBack: () => void, 
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + editDays);
     try {
-      await updateDoc(doc(db, 'tokens', id), {
-        expiresAt: Timestamp.fromDate(expiresAt),
-        label: editLabel || "User",
-        status: 'active'
-      });
+      const { error } = await supabase
+        .from('tokens')
+        .update({
+          expires_at: expiresAt.toISOString(),
+          label: editLabel || "User",
+          status: 'active'
+        })
+        .eq('id', id);
       
+      if (error) throw error;
       setEditingId(null);
-      alert("Token updated successfully!");
-    } catch (err: any) {
-      console.error("Failed to update token in Firebase", err);
-      alert(`Failed to update token: ${err.message || "Unknown error"}`);
+    } catch (err) {
+      console.error("Failed to update token in Supabase", err);
     }
   };
 
@@ -317,53 +328,15 @@ function AdminPanel({ onBack, currentUser, isAdminMode }: { onBack: () => void, 
             <p className="text-xs font-bold text-neutral-500 uppercase tracking-widest mt-1">Manage Access Tokens</p>
           </div>
         </div>
-        <div className="flex gap-3">
-          {isAdminMode ? (
-            <div className="flex items-center gap-3 bg-neutral-900/50 px-4 py-2 rounded-xl border border-neutral-800">
-              <ShieldAlert className="w-4 h-4 text-purple-500" />
-              <span className="text-[10px] font-black text-white uppercase tracking-widest">Admin Token Access</span>
-            </div>
-          ) : currentUser ? (
-            <div className="flex items-center gap-3 bg-neutral-900/50 px-4 py-2 rounded-xl border border-neutral-800">
-              <img src={currentUser?.photoURL || ""} alt="Admin" className="w-6 h-6 rounded-full" referrerPolicy="no-referrer" />
-              <span className="text-[10px] font-black text-white uppercase tracking-widest">{currentUser?.displayName}</span>
-            </div>
-          ) : (
-            <button 
-              onClick={handleAdminLogin}
-              className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-6 py-3 rounded-xl text-xs uppercase tracking-widest transition-all flex items-center gap-2"
-            >
-              <User className="w-4 h-4" />
-              Login as Admin
-            </button>
-          )}
-          <button 
-            onClick={onBack}
-            className="bg-neutral-900 hover:bg-neutral-800 text-white font-bold px-6 py-3 rounded-xl text-xs uppercase tracking-widest transition-all"
-          >
-            Back to Bot
-          </button>
-        </div>
+        <button 
+          onClick={onBack}
+          className="bg-neutral-900 hover:bg-neutral-800 text-white font-bold px-6 py-3 rounded-xl text-xs uppercase tracking-widest transition-all"
+        >
+          Back to Bot
+        </button>
       </div>
 
-      {!isAdmin ? (
-        <div className="relative z-10 py-20 text-center">
-          <div className="w-20 h-20 bg-purple-600/10 rounded-full flex items-center justify-center mx-auto mb-6">
-            <ShieldAlert className="w-10 h-10 text-purple-500" />
-          </div>
-          <h3 className="text-xl font-black text-white uppercase italic tracking-tighter mb-2">Restricted Access</h3>
-          <p className="text-neutral-500 text-sm font-medium mb-8 max-w-xs mx-auto">
-            You must be logged in as the authorized admin or enter with the admin token to manage tokens.
-          </p>
-          <button 
-            onClick={handleAdminLogin}
-            className="bg-purple-600 hover:bg-purple-500 text-white font-black px-10 py-4 rounded-2xl transition-all shadow-lg shadow-purple-600/20 uppercase tracking-widest text-xs"
-          >
-            Authenticate Now
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-6 relative z-10">
+      <div className="space-y-6 relative z-10">
         <div className="bg-neutral-950/50 border border-neutral-800 rounded-3xl p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-black text-white uppercase tracking-widest">Quick Add Token</h3>
@@ -466,7 +439,6 @@ function AdminPanel({ onBack, currentUser, isAdminMode }: { onBack: () => void, 
           </div>
         </div>
       </div>
-      )}
     </div>
   );
 }
@@ -493,38 +465,6 @@ export default function App() {
   const [quotexWaitTime, setQuotexWaitTime] = useState<string | null>(null);
   const [binanceSymbols, setBinanceSymbols] = useState<string[]>([]);
   const [isLoadingSymbols, setIsLoadingSymbols] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(() => {
-    const saved = localStorage.getItem('mw_sound_enabled');
-    return saved !== null ? saved === 'true' : true;
-  });
-
-  useEffect(() => {
-    localStorage.setItem('mw_sound_enabled', soundEnabled.toString());
-  }, [soundEnabled]);
-
-  const playAlertSound = () => {
-    if (!soundEnabled) return;
-    try {
-      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const oscillator = audioCtx.createOscillator();
-      const gainNode = audioCtx.createGain();
-
-      oscillator.connect(gainNode);
-      gainNode.connect(audioCtx.destination);
-
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // A5
-      oscillator.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + 0.5); // A4
-
-      gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
-
-      oscillator.start();
-      oscillator.stop(audioCtx.currentTime + 0.5);
-    } catch (err) {
-      console.error("Failed to play alert sound", err);
-    }
-  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -558,26 +498,32 @@ export default function App() {
         }
 
         try {
-          const docRef = doc(db, 'tokens', savedToken);
-          const docSnap = await getDoc(docRef);
+          const { data, error } = await supabase
+            .from('tokens')
+            .select('*')
+            .eq('id', savedToken)
+            .single();
           
-          if (docSnap.exists()) {
-            const data = docSnap.data();
-            const expiry = new Date(data.expiresAt);
+          if (error) {
+            console.error("Supabase token check error:", error);
+            localStorage.removeItem('mw_trader_token');
+            return;
+          }
+
+          if (data) {
+            const expiry = new Date(data.expires_at);
             if (expiry.getTime() > Date.now()) {
               setUserTokenData({
                 id: data.id,
                 label: data.label,
-                createdAt: data.createdAt,
-                expiresAt: data.expiresAt,
+                createdAt: data.created_at,
+                expiresAt: data.expires_at,
                 status: data.status
               });
               setIsLoggedIn(true);
             } else {
               localStorage.removeItem('mw_trader_token');
             }
-          } else {
-            localStorage.removeItem('mw_trader_token');
           }
         } catch (err) {
           console.error("Token check failed", err);
@@ -638,20 +584,29 @@ export default function App() {
     }
 
     try {
-      const docRef = doc(db, 'tokens', cleanToken);
-      const docSnap = await getDoc(docRef);
+      const { data, error } = await supabase
+        .from('tokens')
+        .select('*')
+        .eq('id', cleanToken)
+        .single();
       
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        const expiry = new Date(data.expiresAt);
+      if (error) {
+        console.error("Supabase login error:", error);
+        setShowTokenModal(true);
+        setError("Access denied. Please contact support for a valid token.");
+        return;
+      }
+      
+      if (data) {
+        const expiry = new Date(data.expires_at);
         
         if (expiry.getTime() > Date.now()) {
           localStorage.setItem('mw_trader_token', cleanToken);
           setUserTokenData({
             id: data.id,
             label: data.label,
-            createdAt: data.createdAt,
-            expiresAt: data.expiresAt,
+            createdAt: data.created_at,
+            expiresAt: data.expires_at,
             status: data.status
           });
           setIsLoggedIn(true);
@@ -664,9 +619,9 @@ export default function App() {
         setShowTokenModal(true);
         setError("Access denied. Please contact support for a valid token.");
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error("Login failed", err);
-      setError(`System error: ${err.message || "Please try again later."}`);
+      setError("System error. Please try again later.");
     }
   };
 
@@ -700,7 +655,6 @@ export default function App() {
   };
 
   const generateSignal = async () => {
-    console.log("Generate Signal clicked", { selectedBroker, selectedPair, selectedTimeframe });
     if (!selectedBroker || !selectedPair || (selectedBroker === "Quotex" && !selectedTimeframe)) {
       alert("Please select broker, pair, and timeframe first!");
       return;
@@ -727,10 +681,7 @@ export default function App() {
     setError(null);
 
     try {
-      if (!process.env.GEMINI_API_KEY) {
-        throw new Error("Gemini API Key is missing. Please set GEMINI_API_KEY in environment variables.");
-      }
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
       let context = "";
       let currentPrice = 0;
 
@@ -783,8 +734,6 @@ export default function App() {
       console.log("AI Response:", response.text);
       const result = JSON.parse(response.text || "{}");
       
-      playAlertSound();
-
       if (isBinary) {
         // For binary options, we show a simpler but powerful signal
         const trend = result.trend || "Neutral";
@@ -990,7 +939,7 @@ export default function App() {
   if (isAdminMode) {
     return (
       <div className="min-h-screen bg-[#0f0a1a] flex items-center justify-center p-4">
-        <AdminPanel onBack={() => setIsAdminMode(false)} currentUser={currentUser} isAdminMode={isAdminMode} />
+        <AdminPanel onBack={() => setIsAdminMode(false)} />
       </div>
     );
   }
@@ -999,34 +948,14 @@ export default function App() {
     <div className="w-full max-w-md px-4 py-10">
       <div className="bg-[#1a1625] border border-neutral-800/50 rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden">
         <div className="flex items-center justify-between absolute top-6 left-6 right-6 z-20">
-          <div className="flex items-center gap-2">
-            {userTokenData && <TokenTimer expiresAt={userTokenData.expiresAt} />}
-            <button 
-              onClick={() => setSoundEnabled(!soundEnabled)}
-              className={`p-2.5 rounded-xl transition-all flex items-center justify-center shadow-lg ${soundEnabled ? 'bg-purple-600/20 text-purple-400 border border-purple-500/30' : 'bg-neutral-800 text-neutral-500 border border-neutral-700/50'}`}
-              title={soundEnabled ? "Disable Sound" : "Enable Sound"}
-            >
-              {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-            </button>
-          </div>
-          <div className="flex gap-2">
-            {(localStorage.getItem('mw_trader_token') === 'adminwaleed786' || currentUser?.email === "waleedawang1020@gmail.com") && (
-              <button 
-                onClick={() => setIsAdminMode(true)}
-                className="bg-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-700 font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-2 transition-all border border-neutral-700/50 shadow-lg"
-              >
-                <ShieldAlert className="w-4 h-4 text-purple-500" />
-                Admin
-              </button>
-            )}
-            <button 
-              onClick={handleLogout}
-              className="bg-gradient-to-r from-[#6366f1] to-[#a855f7] text-white font-bold px-5 py-2.5 rounded-xl text-xs flex items-center gap-2 hover:opacity-90 transition-all shadow-lg"
-            >
-              <LogOut className="w-4 h-4" />
-              Logout
-            </button>
-          </div>
+          {userTokenData && <TokenTimer expiresAt={userTokenData.expiresAt} />}
+          <button 
+            onClick={handleLogout}
+            className="bg-gradient-to-r from-[#6366f1] to-[#a855f7] text-white font-bold px-5 py-2.5 rounded-xl text-xs flex items-center gap-2 hover:opacity-90 transition-all shadow-lg"
+          >
+            <LogOut className="w-4 h-4" />
+            Logout
+          </button>
         </div>
 
         <div className="mt-12">
@@ -1126,7 +1055,7 @@ export default function App() {
               className="bg-neutral-900/50 border border-neutral-800 text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2 hover:bg-neutral-800 transition-all shadow-md"
             >
               <Activity className="w-4 h-4 text-green-500" />
-              <span className="text-xs uppercase tracking-widest">Contact Admin</span>
+              <span className="text-xs uppercase tracking-widest">Admin</span>
             </button>
           </div>
 
@@ -1241,20 +1170,6 @@ export default function App() {
                   to generate signals
                 </p>
               </div>
-            )}
-
-            {error && (
-              <motion.div 
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="mt-4 p-4 bg-red-500/10 border border-red-500/30 rounded-2xl"
-              >
-                <div className="flex items-center gap-2 mb-1">
-                  <AlertCircle className="w-4 h-4 text-red-500" />
-                  <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">System Error</p>
-                </div>
-                <p className="text-[11px] text-red-400 font-bold leading-relaxed">{error}</p>
-              </motion.div>
             )}
           </div>
         </div>
