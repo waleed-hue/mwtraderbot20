@@ -4,8 +4,7 @@ import { TrendingUp, LogOut, ChevronDown, Globe, Clock, BarChart3, MessageSquare
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
 import { db, auth } from './firebase';
-import { supabase } from './supabase';
-import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, query, where, Timestamp, getDocFromServer } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, query, where, Timestamp, getDocFromServer, orderBy } from 'firebase/firestore';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User as FirebaseUser } from 'firebase/auth';
 
 interface ErrorBoundaryProps {
@@ -209,7 +208,7 @@ function TokenTimer({ expiresAt }: { expiresAt: any }) {
   );
 }
 
-function AdminPanel({ onBack }: { onBack: () => void }) {
+function AdminPanel({ onBack, currentUser }: { onBack: () => void, currentUser: FirebaseUser | null }) {
   const [tokens, setTokens] = useState<TokenData[]>([]);
   const [newToken, setNewToken] = useState("");
   const [newLabel, setNewLabel] = useState("");
@@ -217,43 +216,40 @@ function AdminPanel({ onBack }: { onBack: () => void }) {
   const [editDays, setEditDays] = useState(30);
   const [editLabel, setEditLabel] = useState("");
 
+  const isAdmin = currentUser?.email === "waleedawang1020@gmail.com";
+
+  const handleAdminLogin = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (error) {
+      console.error("Admin login failed", error);
+    }
+  };
+
   useEffect(() => {
-    const fetchTokens = async () => {
-      const { data, error } = await supabase
-        .from('tokens')
-        .select('*')
-        .order('created_at', { ascending: false });
+    if (!isAdmin) return;
+
+    const q = query(collection(db, 'tokens'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const tokensData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as any[];
       
-      if (error) {
-        console.error("Error fetching tokens from Supabase:", error);
-        return;
-      }
-      
-      if (data) {
-        setTokens(data.map(t => ({
-          id: t.id,
-          label: t.label,
-          createdAt: t.created_at,
-          expiresAt: t.expires_at,
-          status: t.status
-        })));
-      }
-    };
+      setTokens(tokensData.map(t => ({
+        id: t.id,
+        label: t.label,
+        createdAt: t.createdAt,
+        expiresAt: t.expiresAt,
+        status: t.status
+      })));
+    }, (error) => {
+      console.error("Firebase subscription error:", error);
+    });
 
-    fetchTokens();
-
-    // Set up real-time subscription
-    const channel = supabase
-      .channel('tokens-db-changes')
-      .on('postgres_changes', { event: '*', table: 'tokens', schema: 'public' }, () => {
-        fetchTokens();
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
+    return () => unsubscribe();
+  }, [isAdmin]);
 
   const handleAddToken = async () => {
     if (!newToken.trim()) return;
@@ -262,38 +258,29 @@ function AdminPanel({ onBack }: { onBack: () => void }) {
     expiresAt.setDate(expiresAt.getDate() + 30);
 
     try {
-      const { error } = await supabase
-        .from('tokens')
-        .insert([{
-          id: cleanToken,
-          label: newLabel || "User",
-          created_at: new Date().toISOString(),
-          expires_at: expiresAt.toISOString(),
-          status: 'active'
-        }]);
-
-      if (error) throw error;
+      await setDoc(doc(db, 'tokens', cleanToken), {
+        id: cleanToken,
+        label: newLabel || "User",
+        createdAt: Timestamp.fromDate(new Date()),
+        expiresAt: Timestamp.fromDate(expiresAt),
+        status: 'active'
+      });
 
       setNewToken("");
       setNewLabel("");
       alert("Token added successfully!");
     } catch (err: any) {
-      console.error("Failed to add token to Supabase", err);
+      console.error("Failed to add token to Firebase", err);
       alert(`Failed to add token: ${err.message || "Unknown error"}`);
     }
   };
 
   const handleDeleteToken = async (id: string) => {
     try {
-      const { error } = await supabase
-        .from('tokens')
-        .delete()
-        .eq('id', id);
-      
-      if (error) throw error;
+      await deleteDoc(doc(db, 'tokens', id));
       alert("Token deleted successfully!");
     } catch (err: any) {
-      console.error("Failed to delete token from Supabase", err);
+      console.error("Failed to delete token from Firebase", err);
       alert(`Failed to delete token: ${err.message || "Unknown error"}`);
     }
   };
@@ -302,20 +289,16 @@ function AdminPanel({ onBack }: { onBack: () => void }) {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + editDays);
     try {
-      const { error } = await supabase
-        .from('tokens')
-        .update({
-          expires_at: expiresAt.toISOString(),
-          label: editLabel || "User",
-          status: 'active'
-        })
-        .eq('id', id);
+      await updateDoc(doc(db, 'tokens', id), {
+        expiresAt: Timestamp.fromDate(expiresAt),
+        label: editLabel || "User",
+        status: 'active'
+      });
       
-      if (error) throw error;
       setEditingId(null);
       alert("Token updated successfully!");
     } catch (err: any) {
-      console.error("Failed to update token in Supabase", err);
+      console.error("Failed to update token in Firebase", err);
       alert(`Failed to update token: ${err.message || "Unknown error"}`);
     }
   };
@@ -334,15 +317,48 @@ function AdminPanel({ onBack }: { onBack: () => void }) {
             <p className="text-xs font-bold text-neutral-500 uppercase tracking-widest mt-1">Manage Access Tokens</p>
           </div>
         </div>
-        <button 
-          onClick={onBack}
-          className="bg-neutral-900 hover:bg-neutral-800 text-white font-bold px-6 py-3 rounded-xl text-xs uppercase tracking-widest transition-all"
-        >
-          Back to Bot
-        </button>
+        <div className="flex gap-3">
+          {!isAdmin ? (
+            <button 
+              onClick={handleAdminLogin}
+              className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-6 py-3 rounded-xl text-xs uppercase tracking-widest transition-all flex items-center gap-2"
+            >
+              <User className="w-4 h-4" />
+              Login as Admin
+            </button>
+          ) : (
+            <div className="flex items-center gap-3 bg-neutral-900/50 px-4 py-2 rounded-xl border border-neutral-800">
+              <img src={currentUser?.photoURL || ""} alt="Admin" className="w-6 h-6 rounded-full" referrerPolicy="no-referrer" />
+              <span className="text-[10px] font-black text-white uppercase tracking-widest">{currentUser?.displayName}</span>
+            </div>
+          )}
+          <button 
+            onClick={onBack}
+            className="bg-neutral-900 hover:bg-neutral-800 text-white font-bold px-6 py-3 rounded-xl text-xs uppercase tracking-widest transition-all"
+          >
+            Back to Bot
+          </button>
+        </div>
       </div>
 
-      <div className="space-y-6 relative z-10">
+      {!isAdmin ? (
+        <div className="relative z-10 py-20 text-center">
+          <div className="w-20 h-20 bg-purple-600/10 rounded-full flex items-center justify-center mx-auto mb-6">
+            <ShieldAlert className="w-10 h-10 text-purple-500" />
+          </div>
+          <h3 className="text-xl font-black text-white uppercase italic tracking-tighter mb-2">Restricted Access</h3>
+          <p className="text-neutral-500 text-sm font-medium mb-8 max-w-xs mx-auto">
+            You must be logged in as the authorized admin (waleedawang1020@gmail.com) to manage tokens.
+          </p>
+          <button 
+            onClick={handleAdminLogin}
+            className="bg-purple-600 hover:bg-purple-500 text-white font-black px-10 py-4 rounded-2xl transition-all shadow-lg shadow-purple-600/20 uppercase tracking-widest text-xs"
+          >
+            Authenticate Now
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-6 relative z-10">
         <div className="bg-neutral-950/50 border border-neutral-800 rounded-3xl p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-black text-white uppercase tracking-widest">Quick Add Token</h3>
@@ -445,6 +461,7 @@ function AdminPanel({ onBack }: { onBack: () => void }) {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }
@@ -464,19 +481,6 @@ export default function App() {
   const [selectedTimeframe, setSelectedTimeframe] = useState("");
   const [pairSearch, setPairSearch] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [configError, setConfigError] = useState<string | null>(null);
-
-  useEffect(() => {
-    // Check for missing configuration
-    const missing = [];
-    if (!import.meta.env.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL.includes('placeholder')) missing.push('Supabase URL');
-    if (!import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY.includes('placeholder')) missing.push('Supabase Anon Key');
-    if (!process.env.GEMINI_API_KEY) missing.push('Gemini API Key');
-
-    if (missing.length > 0) {
-      setConfigError(`Missing Configuration: ${missing.join(', ')}. Please set these in your environment variables (Netlify/Vercel/Local).`);
-    }
-  }, []);
   const [signal, setSignal] = useState<string | null>(null);
   const [detailedSignal, setDetailedSignal] = useState<DetailedSignal | null>(null);
   const [showTokenModal, setShowTokenModal] = useState(false);
@@ -549,32 +553,26 @@ export default function App() {
         }
 
         try {
-          const { data, error } = await supabase
-            .from('tokens')
-            .select('*')
-            .eq('id', savedToken)
-            .single();
+          const docRef = doc(db, 'tokens', savedToken);
+          const docSnap = await getDoc(docRef);
           
-          if (error) {
-            console.error("Supabase token check error:", error);
-            localStorage.removeItem('mw_trader_token');
-            return;
-          }
-
-          if (data) {
-            const expiry = new Date(data.expires_at);
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            const expiry = new Date(data.expiresAt);
             if (expiry.getTime() > Date.now()) {
               setUserTokenData({
                 id: data.id,
                 label: data.label,
-                createdAt: data.created_at,
-                expiresAt: data.expires_at,
+                createdAt: data.createdAt,
+                expiresAt: data.expiresAt,
                 status: data.status
               });
               setIsLoggedIn(true);
             } else {
               localStorage.removeItem('mw_trader_token');
             }
+          } else {
+            localStorage.removeItem('mw_trader_token');
           }
         } catch (err) {
           console.error("Token check failed", err);
@@ -612,32 +610,6 @@ export default function App() {
     setDetailedSignal(null);
   }, [selectedBroker]);
 
-  if (configError) {
-    return (
-      <div className="min-h-screen bg-[#0f0a1a] flex items-center justify-center p-6 text-center">
-        <div className="bg-[#1a1625] border border-red-500/20 p-10 rounded-[3rem] max-w-lg shadow-2xl">
-          <AlertTriangle className="w-16 h-16 text-red-500 mx-auto mb-6" />
-          <h2 className="text-2xl font-black text-white mb-4 uppercase italic tracking-tighter leading-none">Configuration Required</h2>
-          <p className="text-neutral-500 mb-8 font-medium leading-relaxed">
-            {configError}
-          </p>
-          <div className="space-y-3">
-            <button 
-              onClick={() => window.open('https://wa.me/923165581294', '_blank')}
-              className="w-full bg-[#25D366] hover:bg-[#128C7E] text-white font-black py-4 rounded-2xl transition-all shadow-lg shadow-green-500/20 flex items-center justify-center gap-3 uppercase tracking-wider"
-            >
-              <MessageSquare className="w-5 h-5" />
-              Contact Support
-            </button>
-            <p className="text-[10px] text-neutral-700 font-black uppercase tracking-widest">
-              Check your environment variables
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   if (!isAuthReady) {
     return (
       <div className="min-h-screen bg-[#0f0a1a] flex items-center justify-center">
@@ -661,29 +633,20 @@ export default function App() {
     }
 
     try {
-      const { data, error } = await supabase
-        .from('tokens')
-        .select('*')
-        .eq('id', cleanToken)
-        .single();
+      const docRef = doc(db, 'tokens', cleanToken);
+      const docSnap = await getDoc(docRef);
       
-      if (error) {
-        console.error("Supabase login error:", error);
-        setError(`Access denied: ${error.message || "Invalid Token"}`);
-        setShowTokenModal(true);
-        return;
-      }
-      
-      if (data) {
-        const expiry = new Date(data.expires_at);
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const expiry = new Date(data.expiresAt);
         
         if (expiry.getTime() > Date.now()) {
           localStorage.setItem('mw_trader_token', cleanToken);
           setUserTokenData({
             id: data.id,
             label: data.label,
-            createdAt: data.created_at,
-            expiresAt: data.expires_at,
+            createdAt: data.createdAt,
+            expiresAt: data.expiresAt,
             status: data.status
           });
           setIsLoggedIn(true);
@@ -696,9 +659,9 @@ export default function App() {
         setShowTokenModal(true);
         setError("Access denied. Please contact support for a valid token.");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Login failed", err);
-      setError("System error. Please try again later.");
+      setError(`System error: ${err.message || "Please try again later."}`);
     }
   };
 
@@ -1018,7 +981,7 @@ export default function App() {
   if (isAdminMode) {
     return (
       <div className="min-h-screen bg-[#0f0a1a] flex items-center justify-center p-4">
-        <AdminPanel onBack={() => setIsAdminMode(false)} />
+        <AdminPanel onBack={() => setIsAdminMode(false)} currentUser={currentUser} />
       </div>
     );
   }
