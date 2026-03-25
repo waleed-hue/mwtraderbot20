@@ -3,8 +3,8 @@ import { useState, useEffect, Component } from 'react';
 import { TrendingUp, LogOut, ChevronDown, Globe, Clock, BarChart3, MessageSquare, CreditCard, AlertTriangle, ShieldAlert, Target, AlertCircle, TrendingDown, Activity, Info, Plus, Trash2, Edit2, Save, X, User, Key, Calendar, Timer } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
-import { db, auth } from './firebase';
-import { supabase } from './supabase';
+import { db, auth } from './firebase.ts';
+import { supabase } from './supabase.ts';
 import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, query, where, Timestamp, getDocFromServer } from 'firebase/firestore';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User as FirebaseUser } from 'firebase/auth';
 
