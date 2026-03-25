@@ -788,7 +788,15 @@ export default function App() {
     } catch (err: any) {
       console.error("Signal generation failed:", err);
       const errorMessage = err.message || "Unknown error";
-      setError(`Failed to generate signal: ${errorMessage}. Please check your internet or try again.`);
+      
+      if (errorMessage.includes("429") || errorMessage.includes("RESOURCE_EXHAUSTED")) {
+        setError("API Limit Reached: You have exceeded your Gemini API quota. Please wait a few minutes or check your API key limits in Google AI Studio.");
+      } else if (errorMessage.includes("API Key is missing")) {
+        setError("Configuration Error: Gemini API Key is missing. Please set GEMINI_API_KEY in your Netlify environment variables.");
+      } else {
+        setError(`Failed to generate signal: ${errorMessage}. Please check your internet or try again.`);
+      }
+      
       setIsGenerating(false);
     }
   };
