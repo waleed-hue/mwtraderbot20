@@ -208,7 +208,7 @@ function TokenTimer({ expiresAt }: { expiresAt: any }) {
   );
 }
 
-function AdminPanel({ onBack, currentUser }: { onBack: () => void, currentUser: FirebaseUser | null }) {
+function AdminPanel({ onBack, currentUser, isAdminMode }: { onBack: () => void, currentUser: FirebaseUser | null, isAdminMode: boolean }) {
   const [tokens, setTokens] = useState<TokenData[]>([]);
   const [newToken, setNewToken] = useState("");
   const [newLabel, setNewLabel] = useState("");
@@ -216,7 +216,7 @@ function AdminPanel({ onBack, currentUser }: { onBack: () => void, currentUser: 
   const [editDays, setEditDays] = useState(30);
   const [editLabel, setEditLabel] = useState("");
 
-  const isAdmin = currentUser?.email === "waleedawang1020@gmail.com";
+  const isAdmin = isAdminMode || currentUser?.email === "waleedawang1020@gmail.com";
 
   const handleAdminLogin = async () => {
     try {
@@ -318,7 +318,17 @@ function AdminPanel({ onBack, currentUser }: { onBack: () => void, currentUser: 
           </div>
         </div>
         <div className="flex gap-3">
-          {!isAdmin ? (
+          {isAdminMode ? (
+            <div className="flex items-center gap-3 bg-neutral-900/50 px-4 py-2 rounded-xl border border-neutral-800">
+              <ShieldAlert className="w-4 h-4 text-purple-500" />
+              <span className="text-[10px] font-black text-white uppercase tracking-widest">Admin Token Access</span>
+            </div>
+          ) : currentUser ? (
+            <div className="flex items-center gap-3 bg-neutral-900/50 px-4 py-2 rounded-xl border border-neutral-800">
+              <img src={currentUser?.photoURL || ""} alt="Admin" className="w-6 h-6 rounded-full" referrerPolicy="no-referrer" />
+              <span className="text-[10px] font-black text-white uppercase tracking-widest">{currentUser?.displayName}</span>
+            </div>
+          ) : (
             <button 
               onClick={handleAdminLogin}
               className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-6 py-3 rounded-xl text-xs uppercase tracking-widest transition-all flex items-center gap-2"
@@ -326,11 +336,6 @@ function AdminPanel({ onBack, currentUser }: { onBack: () => void, currentUser: 
               <User className="w-4 h-4" />
               Login as Admin
             </button>
-          ) : (
-            <div className="flex items-center gap-3 bg-neutral-900/50 px-4 py-2 rounded-xl border border-neutral-800">
-              <img src={currentUser?.photoURL || ""} alt="Admin" className="w-6 h-6 rounded-full" referrerPolicy="no-referrer" />
-              <span className="text-[10px] font-black text-white uppercase tracking-widest">{currentUser?.displayName}</span>
-            </div>
           )}
           <button 
             onClick={onBack}
@@ -348,7 +353,7 @@ function AdminPanel({ onBack, currentUser }: { onBack: () => void, currentUser: 
           </div>
           <h3 className="text-xl font-black text-white uppercase italic tracking-tighter mb-2">Restricted Access</h3>
           <p className="text-neutral-500 text-sm font-medium mb-8 max-w-xs mx-auto">
-            You must be logged in as the authorized admin (waleedawang1020@gmail.com) to manage tokens.
+            You must be logged in as the authorized admin or enter with the admin token to manage tokens.
           </p>
           <button 
             onClick={handleAdminLogin}
@@ -695,6 +700,7 @@ export default function App() {
   };
 
   const generateSignal = async () => {
+    console.log("Generate Signal clicked", { selectedBroker, selectedPair, selectedTimeframe });
     if (!selectedBroker || !selectedPair || (selectedBroker === "Quotex" && !selectedTimeframe)) {
       alert("Please select broker, pair, and timeframe first!");
       return;
@@ -721,7 +727,10 @@ export default function App() {
     setError(null);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      if (!process.env.GEMINI_API_KEY) {
+        throw new Error("Gemini API Key is missing. Please set GEMINI_API_KEY in environment variables.");
+      }
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       let context = "";
       let currentPrice = 0;
 
@@ -981,7 +990,7 @@ export default function App() {
   if (isAdminMode) {
     return (
       <div className="min-h-screen bg-[#0f0a1a] flex items-center justify-center p-4">
-        <AdminPanel onBack={() => setIsAdminMode(false)} currentUser={currentUser} />
+        <AdminPanel onBack={() => setIsAdminMode(false)} currentUser={currentUser} isAdminMode={isAdminMode} />
       </div>
     );
   }
@@ -1000,13 +1009,24 @@ export default function App() {
               {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
             </button>
           </div>
-          <button 
-            onClick={handleLogout}
-            className="bg-gradient-to-r from-[#6366f1] to-[#a855f7] text-white font-bold px-5 py-2.5 rounded-xl text-xs flex items-center gap-2 hover:opacity-90 transition-all shadow-lg"
-          >
-            <LogOut className="w-4 h-4" />
-            Logout
-          </button>
+          <div className="flex gap-2">
+            {(localStorage.getItem('mw_trader_token') === 'adminwaleed786' || currentUser?.email === "waleedawang1020@gmail.com") && (
+              <button 
+                onClick={() => setIsAdminMode(true)}
+                className="bg-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-700 font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-2 transition-all border border-neutral-700/50 shadow-lg"
+              >
+                <ShieldAlert className="w-4 h-4 text-purple-500" />
+                Admin
+              </button>
+            )}
+            <button 
+              onClick={handleLogout}
+              className="bg-gradient-to-r from-[#6366f1] to-[#a855f7] text-white font-bold px-5 py-2.5 rounded-xl text-xs flex items-center gap-2 hover:opacity-90 transition-all shadow-lg"
+            >
+              <LogOut className="w-4 h-4" />
+              Logout
+            </button>
+          </div>
         </div>
 
         <div className="mt-12">
@@ -1106,7 +1126,7 @@ export default function App() {
               className="bg-neutral-900/50 border border-neutral-800 text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2 hover:bg-neutral-800 transition-all shadow-md"
             >
               <Activity className="w-4 h-4 text-green-500" />
-              <span className="text-xs uppercase tracking-widest">Admin</span>
+              <span className="text-xs uppercase tracking-widest">Contact Admin</span>
             </button>
           </div>
 
@@ -1221,6 +1241,20 @@ export default function App() {
                   to generate signals
                 </p>
               </div>
+            )}
+
+            {error && (
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mt-4 p-4 bg-red-500/10 border border-red-500/30 rounded-2xl"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <AlertCircle className="w-4 h-4 text-red-500" />
+                  <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">System Error</p>
+                </div>
+                <p className="text-[11px] text-red-400 font-bold leading-relaxed">{error}</p>
+              </motion.div>
             )}
           </div>
         </div>
